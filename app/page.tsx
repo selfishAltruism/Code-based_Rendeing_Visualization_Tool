@@ -62,7 +62,7 @@ export default ExampleComponent;
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "rrv-graph.svg";
+    link.download = "crv-graph.svg";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -83,9 +83,9 @@ export default ExampleComponent;
       <header className="border-b border-neutral-200 bg-white">
         <div className="mx-auto flex h-12 max-w-6xl items-center justify-between px-4">
           <div className="flex items-baseline gap-2">
-            <span className="text-base font-semibold tracking-tight">RRV</span>
+            <span className="text-lg font-semibold tracking-tight">crv.</span>
             <span className="text-sm text-neutral-500">
-              React Rendering Visualization Tool
+              React Code-based Rendeing Visualization Tool
             </span>
           </div>
         </div>
@@ -143,7 +143,7 @@ export default ExampleComponent;
               className="flex h-full min-h-[0] flex-col"
             >
               <div className="mb-2 flex h-8 items-center justify-between gap-2">
-                <span className="text-sm font-semibold">RRV Graph</span>
+                <span className="text-sm font-semibold">Graph</span>
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -182,7 +182,7 @@ export default ExampleComponent;
 
       <footer className="border-t border-neutral-200 bg-neutral-50">
         <div className="mx-auto flex h-8 max-w-6xl items-center justify-between px-4 text-xs text-neutral-500">
-          <span>RRV · React Rendering Visualization Tool</span>
+          <span>crv. | React Code-based Rendeing Visualization Tool</span>
           <a
             href="https://github.com/selfishAltruism"
             target="_blank"

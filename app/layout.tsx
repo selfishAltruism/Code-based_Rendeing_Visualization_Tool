@@ -3,16 +3,18 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RRV | React Rendering Visualization Tool",
+  title: "crv. | React Code-based Rendeing Visualization Tool",
   description:
-    "RRV는 React 컴포넌트의 렌더링 흐름을 시각화하여 useState, 전역 상태, JSX 구조를 한 눈에 파악할 수 있게 해주는 웹 도구임.",
-  metadataBase: new URL("https://kyu-rrv.vercel.app"), // 실제 도메인으로 교체 필요.
+    "crv는 React 컴포넌트의 렌더링 흐름을 시각화하여 useState, 전역 상태, JSX 구조를 한 눈에 파악할 수 있게 해주는 웹 도구임.",
+  metadataBase: new URL("https://react-crv.vercel.app"), // 실제 도메인으로 교체 필요.
   keywords: [
     "React",
+    "Code-based",
     "Rendering",
     "Visualization",
     "Re-render",
-    "RRV",
+    "crv",
+    "CRV",
     "React performance",
     "React optimization",
   ],
@@ -37,13 +39,13 @@ export const metadata: Metadata = {
     ],
   },
   openGraph: {
-    title: "RRV | React Rendering Visualization Tool",
+    title: "crv. | React Code-based Rendeing Visualization Tool",
     description:
-      "React 렌더링 흐름과 JSX 구조를 SVG 그래프로 분석하는 시각화 도구 RRV.",
-    url: "https://kyu-rrv.vercel.app",
-    siteName: "RRV",
+      "React 렌더링 흐름과 JSX 구조를 SVG 그래프로 분석하는 시각화 도구 crv.",
+    url: "https://react-crv.vercel.app",
+    siteName: "crv",
     type: "website",
-    images: ["https://kyu-rrv.vercel.app/opengraph-image.png"],
+    images: ["https://react-crv.vercel.app/opengraph-image.png"],
   },
 };
 
