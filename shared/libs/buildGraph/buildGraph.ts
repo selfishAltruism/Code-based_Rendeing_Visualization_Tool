@@ -1,57 +1,7 @@
-// libs/graphModel.ts
-import type { ComponentAnalysis } from "./analyzeReactComponent";
-
-export type GraphNodeKind =
-  | "independent"
-  | "state"
-  | "effect"
-  | "variable"
-  | "jsx"
-  | "external";
-
-export type GraphEdgeKind =
-  | "flow"
-  | "state-dependency"
-  | "state-mutation"
-  | "external";
-
-export interface GraphNode {
-  id: string;
-  label: string;
-  kind: GraphNodeKind;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  meta?: Record<string, unknown>;
-}
-
-export interface EdgeEndpoint {
-  nodeId: string;
-  x: number;
-  y: number;
-}
-
-export interface GraphEdge {
-  id: string;
-  from: EdgeEndpoint;
-  to: EdgeEndpoint;
-  kind: GraphEdgeKind;
-  label?: string;
-}
-
-export interface GraphLayout {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  width: number;
-  height: number;
-  colX: Record<"independent" | "state" | "variable" | "effect" | "jsx", number>;
-}
-
 /**
  * 컬럼 x 위치 구성
  */
-function buildColumnX(): GraphLayout["colX"] {
+function buildColumnX(): BuildGraph.GraphLayout["colX"] {
   const base = 80;
   const gap = 220;
 
@@ -71,11 +21,11 @@ function layoutColumnNodes<
   T extends { id: string; label: string; meta?: Record<string, unknown> },
 >(
   items: T[],
-  kind: GraphNodeKind,
+  kind: BuildGraph.GraphNodeKind,
   x: number,
   startY: number,
   gapY: number,
-): GraphNode[] {
+): BuildGraph.GraphNode[] {
   return items.map((item, index) => {
     const y = startY + index * gapY;
     return {
@@ -95,8 +45,8 @@ function layoutColumnNodes<
  * 분석 결과 → 그래프 레이아웃
  */
 export function buildGraphFromAnalysis(
-  analysis: ComponentAnalysis | null,
-): GraphLayout {
+  analysis: Mapping.MappingResult | null,
+): BuildGraph.GraphLayout {
   if (!analysis) {
     const colX = buildColumnX();
     return {
@@ -109,8 +59,8 @@ export function buildGraphFromAnalysis(
   }
 
   const colX = buildColumnX();
-  const nodes: GraphNode[] = [];
-  const edges: GraphEdge[] = [];
+  const nodes: BuildGraph.GraphNode[] = [];
+  const edges: BuildGraph.GraphEdge[] = [];
 
   // 1. 독립 노드 (useRef)
   const independentItems = analysis.hooks
@@ -177,25 +127,67 @@ export function buildGraphFromAnalysis(
   );
   nodes.push(...effectNodes);
 
-  // 4. JSX 노드
-  const jsxItems = analysis.jsxNodes.map((jsx) => ({
-    id: jsx.id,
+  // 4. JSX 노드 (depth 기반으로 배치)
+  type JsxLayoutItem = {
+    id: string;
+    label: string;
+    depth: number;
+    meta?: Record<string, unknown>;
+  };
+
+  const jsxLayoutItems: JsxLayoutItem[] = analysis.jsxNodes.map((jsx) => ({
+    id: jsx.id, // AnalyzedJsxNode.id (예: "jsx-1")
     label: jsx.component,
     meta: {
       depth: jsx.depth,
       props: jsx.props,
     } as Record<string, unknown>,
+    depth: jsx.depth,
   }));
 
-  const jsxNodes = layoutColumnNodes(jsxItems, "jsx", colX.jsx, 80, 32);
+  const jsxNodes: BuildGraph.GraphNode[] = [];
+
+  // depth별로 그룹핑
+  const jsxByDepth = new Map<number, JsxLayoutItem[]>();
+  jsxLayoutItems.forEach((item) => {
+    const arr = jsxByDepth.get(item.depth) ?? [];
+    arr.push(item);
+    jsxByDepth.set(item.depth, arr);
+  });
+
+  const jsxBaseY = 80;
+  const depthGapY = 80; // depth 간 간격
+  const intraGapY = 32; // 같은 depth 내에서 노드 간 간격
+
+  Array.from(jsxByDepth.entries())
+    .sort((a, b) => a[0] - b[0])
+    .forEach(([depth, items]) => {
+      items.forEach((item, index) => {
+        const y = jsxBaseY + depth * depthGapY + index * intraGapY;
+
+        const node: BuildGraph.GraphNode = {
+          id: `jsx-${item.id}`, // 전체 그래프에서의 node id
+          label: item.label,
+          kind: "jsx",
+          x: colX.jsx,
+          y,
+          width: 120,
+          height: 32,
+          meta: item.meta,
+        };
+
+        jsxNodes.push(node);
+      });
+    });
+
   nodes.push(...jsxNodes);
 
   /**
    * 단순 flow 연결 헬퍼
    */
   function connectSequential(
-    fromNodes: GraphNode[],
-    toNodes: GraphNode[],
+    fromNodes: BuildGraph.GraphNode[],
+    toNodes: BuildGraph.GraphNode[],
     label?: string,
   ): void {
     fromNodes.forEach((from, index) => {
@@ -344,6 +336,42 @@ export function buildGraphFromAnalysis(
   const width = colX.jsx + 200;
   const lastJsxY = jsxNodes.length ? jsxNodes[jsxNodes.length - 1].y : 600;
   const height = lastJsxY + 120;
+
+  // JSX 부모–자식 관계 edge 추가
+  // analysis.jsxNodes의 id / parentId (논리 id)를
+  // 그래프 노드 id(`jsx-${logicalId}`)로 매핑하여 연결
+  const jsxNodeMap = new Map<string, BuildGraph.GraphNode>();
+  jsxNodes.forEach((node) => {
+    // node.id는 "jsx-" + logicalId 이므로, prefix 제거해서 역매핑
+    const logicalId = node.id.replace(/^jsx-/, "");
+    jsxNodeMap.set(logicalId, node);
+  });
+
+  analysis.jsxNodes.forEach((jsx) => {
+    if (!jsx.parentId) return; // 루트 JSX는 부모 없음
+
+    const parentNode = jsxNodeMap.get(jsx.parentId);
+    const childNode = jsxNodeMap.get(jsx.id);
+    if (!parentNode || !childNode) return;
+
+    edges.push({
+      id: `jsx-tree-${parentNode.id}-${childNode.id}`,
+      from: {
+        nodeId: parentNode.id,
+        x: parentNode.x + parentNode.width / 2,
+        y: parentNode.y,
+      },
+      to: {
+        nodeId: childNode.id,
+        x: childNode.x - childNode.width / 2,
+        y: childNode.y,
+      },
+      // 기존 타입을 유지하기 위해 kind는 "flow"로 두고,
+      // JSX 계층 관계라는 정보는 meta 쪽에 담는 것도 가능
+      kind: "flow",
+      label: undefined,
+    });
+  });
 
   return {
     nodes,

@@ -1,37 +1,15 @@
 "use client";
 
 import { useRef, useState } from "react";
-import {
-  analyzeReactComponent,
-  type ComponentAnalysis,
-} from "../libs/analyzeReactComponent";
-import { RenderGraphSvg } from "../entities/RenderGraphSvg";
 
-const SOURCE_INIT = `import React, { useState, useEffect, useRef } from 'react';
-
-function ExampleComponent() {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    console.log('effect', count);
-    ref.current = document.body;
-  }, [count]);
-
-  return (
-    <div ref={ref}>
-      <button onClick={() => setCount((c) => c + 1)}>Click {count}</button>
-    </div>
-  );
-}
-
-export default ExampleComponent;
-`;
+import { analyzeReactComponent } from "@/shared/libs/mapping/mapping";
+import { RenderGraphSvg } from "@/entities/RenderGraphSvg";
+import { SOURCE_INIT } from "@/shared/consts";
 
 export default function Page() {
   const [source, setSource] = useState<string>(SOURCE_INIT);
 
-  const [analysis, setAnalysis] = useState<ComponentAnalysis | null>(null);
+  const [analysis, setAnalysis] = useState<Mapping.MappingResult | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -116,7 +94,7 @@ export default function Page() {
               <div className="mb-2 flex h-8 items-center justify-between">
                 <label
                   htmlFor="code-input"
-                  className="text-sm font-medium text-neutral-700"
+                  className="text-sm font-bold text-neutral-700"
                 >
                   Component Source Code
                 </label>
@@ -181,14 +159,14 @@ export default function Page() {
       </section>
 
       <footer className="border-t border-neutral-200 bg-neutral-50">
-        <div className="mx-auto flex h-12 max-w-6xl flex-col items-start justify-center px-4 text-xs text-neutral-500">
+        <div className="mx-auto flex h-14 max-w-6xl flex-col items-start justify-center px-4 text-xs text-neutral-500">
           <span>© 2025 crv. All rights reserved.</span>
           <a
             href="https://github.com/selfishAltruism"
             target="_blank"
             rel="noopener noreferrer"
           >
-            Designed & Made by <strong>Kyu</strong>
+            Designed & Made by <strong>Kyu</strong>.
           </a>
         </div>
       </footer>

@@ -3,90 +3,6 @@ import { parse } from "@babel/parser";
 import traverse, { type NodePath } from "@babel/traverse";
 import * as t from "@babel/types";
 
-export type HookKind =
-  | "useState"
-  | "useRef"
-  | "useReducer"
-  | "useEffect"
-  | "useLayoutEffect"
-  | "useCallback"
-  | "useMemo"
-  | "zustand"
-  | "react-query"
-  | "custom";
-
-export type StateScope = "local" | "global" | "external";
-
-export interface AnalyzedHook {
-  id: string;
-  name: string;
-  hookKind: HookKind;
-  scope: StateScope;
-  definedAt: {
-    line: number;
-    column: number;
-  } | null;
-  meta?: Record<string, unknown>;
-}
-
-export interface EffectDependency {
-  name: string;
-  isGlobal: boolean;
-}
-
-export interface AnalyzedEffect {
-  id: string;
-  hookKind: "useEffect" | "useLayoutEffect";
-  dependencies: EffectDependency[];
-  setters: string[];
-  refs: string[];
-  definedAt: {
-    line: number;
-    column: number;
-  } | null;
-}
-
-export interface AnalyzedCallback {
-  id: string;
-  name: string | null;
-  dependencies: string[];
-  setters: string[];
-  definedAt: {
-    line: number;
-    column: number;
-  } | null;
-}
-
-export interface AnalyzedJsxNode {
-  id: string;
-  component: string;
-  depth: number;
-  props: string[];
-  definedAt: {
-    line: number;
-    column: number;
-  } | null;
-}
-
-export interface ComponentAnalysis {
-  source: string;
-  fileName?: string;
-  componentName: string | null;
-
-  hooks: AnalyzedHook[];
-  effects: AnalyzedEffect[];
-  callbacks: AnalyzedCallback[];
-  jsxNodes: AnalyzedJsxNode[];
-
-  meta: {
-    exportedComponents: string[];
-    defaultExport: string | null;
-  };
-
-  // UI에서 analysis.errors.length, analysis.errors.map 사용
-  errors: string[];
-}
-
 /**
  * 소스 → AST
  */
@@ -161,7 +77,7 @@ function pickPrimaryComponent(
 function classifyHookKind(
   calleeName: string,
   importSource: string | null,
-): HookKind {
+): Mapping.HookKind {
   if (calleeName === "useState") return "useState";
   if (calleeName === "useRef") return "useRef";
   if (calleeName === "useReducer") return "useReducer";
@@ -254,11 +170,11 @@ function analyzeEffectCall(
   effectId: string,
   hookKind: "useEffect" | "useLayoutEffect",
   globalStateNames: Set<string>,
-): AnalyzedEffect {
+): Mapping.AnalyzedEffect {
   const node = path.node;
   const loc = node.loc;
 
-  const dependencies: EffectDependency[] = [];
+  const dependencies: Mapping.EffectDependency[] = [];
   const setters: string[] = [];
   const refs: string[] = [];
 
@@ -339,7 +255,7 @@ function analyzeEffectCall(
 function analyzeUseCallbackCall(
   path: NodePath<t.CallExpression>,
   callbackId: string,
-): AnalyzedCallback {
+): Mapping.AnalyzedCallback {
   const node = path.node;
   const loc = node.loc;
 
@@ -402,10 +318,11 @@ function analyzeUseCallbackCall(
 
 /**
  * JSX 트리 분석
+ * - 현재 구조를 유지하되, parentId와 depth를 스택 기반으로 계산
  */
 function analyzeJsxTree(
   rootPath: NodePath<t.Node>,
-  result: AnalyzedJsxNode[],
+  result: Mapping.AnalyzedJsxNode[],
 ): void {
   function getJsxName(node: t.JSXOpeningElement | t.JSXClosingElement): string {
     const name = node.name;
@@ -438,47 +355,57 @@ function analyzeJsxTree(
     return "Unknown";
   }
 
-  function traverseJsx(path: NodePath<t.JSXElement>, depth: number): void {
-    const opening = path.node.openingElement;
-    const loc = opening.loc;
-
-    const propIdentifiers: string[] = [];
-
-    opening.attributes.forEach(
-      (attr: t.JSXAttribute | t.JSXSpreadAttribute) => {
-        if (!t.isJSXAttribute(attr)) return;
-        const value = attr.value;
-        if (
-          t.isJSXExpressionContainer(value) &&
-          t.isIdentifier(value.expression)
-        ) {
-          propIdentifiers.push(value.expression.name);
-        }
-      },
-    );
-
-    result.push({
-      id: `jsx-${result.length + 1}`,
-      component: getJsxName(opening),
-      depth,
-      props: Array.from(new Set(propIdentifiers)),
-      definedAt: loc
-        ? { line: loc.start.line, column: loc.start.column }
-        : null,
-    });
-
-    path.traverse({
-      JSXElement(childPath: NodePath<t.JSXElement>) {
-        traverseJsx(childPath, depth + 1);
-      },
-    });
-  }
+  // JSX 부모 추적용 스택: 현재 열려 있는 JSX 노드의 id들을 저장
+  const jsxStack: string[] = [];
 
   rootPath.traverse({
-    JSXElement(path: NodePath<t.JSXElement>) {
-      if (!path.parentPath.isJSXElement()) {
-        traverseJsx(path, 0);
-      }
+    JSXElement: {
+      enter(path: NodePath<t.JSXElement>) {
+        const opening = path.node.openingElement;
+        const loc = opening.loc;
+
+        // props 안에서 Identifier로 참조되는 값 추출 (기존 로직 재사용)
+        const propIdentifiers: string[] = [];
+        opening.attributes.forEach(
+          (attr: t.JSXAttribute | t.JSXSpreadAttribute) => {
+            if (!t.isJSXAttribute(attr)) return;
+            const value = attr.value;
+            if (
+              t.isJSXExpressionContainer(value) &&
+              t.isIdentifier(value.expression)
+            ) {
+              propIdentifiers.push(value.expression.name);
+            }
+          },
+        );
+
+        // 현재 depth는 스택 길이
+        const depth = jsxStack.length;
+        const parentId =
+          jsxStack.length > 0 ? jsxStack[jsxStack.length - 1] : null;
+
+        // 새로운 JSX 노드 id 생성
+        const id = `jsx-${result.length + 1}`;
+
+        result.push({
+          id,
+          component: getJsxName(opening),
+          depth,
+          parentId,
+          props: Array.from(new Set(propIdentifiers)),
+          definedAt: loc
+            ? { line: loc.start.line, column: loc.start.column }
+            : null,
+        });
+
+        // 지금 들어온 노드를 스택에 push → 이후 자식 JSX의 parentId가 됨
+        jsxStack.push(id);
+      },
+
+      exit() {
+        // 이 JSXElement가 끝날 때 스택에서 pop
+        jsxStack.pop();
+      },
     },
   });
 }
@@ -491,15 +418,15 @@ function analyzeComponentBody(
   primaryComponentName: string | null,
   importMap: ImportMap,
 ): {
-  hooks: AnalyzedHook[];
-  effects: AnalyzedEffect[];
-  callbacks: AnalyzedCallback[];
-  jsxNodes: AnalyzedJsxNode[];
+  hooks: Mapping.AnalyzedHook[];
+  effects: Mapping.AnalyzedEffect[];
+  callbacks: Mapping.AnalyzedCallback[];
+  jsxNodes: Mapping.AnalyzedJsxNode[];
 } {
-  const hooks: AnalyzedHook[] = [];
-  const effects: AnalyzedEffect[] = [];
-  const callbacks: AnalyzedCallback[] = [];
-  const jsxNodes: AnalyzedJsxNode[] = [];
+  const hooks: Mapping.AnalyzedHook[] = [];
+  const effects: Mapping.AnalyzedEffect[] = [];
+  const callbacks: Mapping.AnalyzedCallback[] = [];
+  const jsxNodes: Mapping.AnalyzedJsxNode[] = [];
 
   const globalStateNames = new Set<string>();
 
@@ -559,13 +486,13 @@ function analyzeComponentBody(
           });
         }
 
-        const scope: StateScope =
+        const scope: Mapping.StateScope =
           hookKind === "zustand" || hookKind === "react-query"
             ? "global"
             : "local";
 
         names.forEach((name) => {
-          const hook: AnalyzedHook = {
+          const hook: Mapping.AnalyzedHook = {
             id: `hook-${hooks.length + 1}`,
             name,
             hookKind,
@@ -660,7 +587,7 @@ function analyzeComponentBody(
 export function analyzeReactComponent(
   source: string,
   fileName?: string,
-): ComponentAnalysis {
+): Mapping.MappingResult {
   const ast = parseSourceToAst(source);
   const importMap = collectImportMap(ast);
   const exportInfo = collectExportedComponents(ast);

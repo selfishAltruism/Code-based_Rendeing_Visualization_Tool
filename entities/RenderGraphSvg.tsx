@@ -2,16 +2,11 @@
 "use client";
 
 import React, { useMemo } from "react";
-import type { ComponentAnalysis } from "../libs/analyzeReactComponent";
-import {
-  buildGraphFromAnalysis,
-  type GraphNode,
-  type GraphEdge,
-  type GraphEdgeKind,
-} from "../libs/graphModel";
+
+import { buildGraphFromAnalysis } from "@/shared/libs/buildGraph/buildGraph";
 
 interface RenderGraphSvgProps {
-  analysis: ComponentAnalysis | null;
+  analysis: Mapping.MappingResult | null;
   svgRef: React.RefObject<SVGSVGElement | null>;
 }
 
@@ -39,7 +34,7 @@ function buildCurvePath(
 /**
  * edge 종류별 스타일
  */
-function getEdgeStyle(kind: GraphEdgeKind): {
+function getEdgeStyle(kind: BuildGraph.GraphEdgeKind): {
   stroke: string;
   dashed?: boolean;
   markerId: string;

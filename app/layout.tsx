@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: "crv.",
   description:
     "crv는 React 컴포넌트의 렌더링 흐름을 시각화하여 useState, 전역 상태, JSX 구조를 한 눈에 파악할 수 있게 해주는 웹 도구임.",
-  metadataBase: new URL("https://react-crv.vercel.app"), // 실제 도메인으로 교체 필요.
+  metadataBase: new URL("https://react-crv.vercel.app"),
   keywords: [
     "React",
     "Code-based",
