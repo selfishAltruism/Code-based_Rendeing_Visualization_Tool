@@ -1,4 +1,3 @@
-// components/RenderGraphSvg.tsx
 "use client";
 
 import React, { useMemo } from "react";
@@ -8,6 +7,198 @@ import { buildGraphFromMappingResult } from "@/shared/libs/buildGraph/buildGraph
 interface RenderGraphSvgProps {
   mappingResult: Mapping.MappingResult | null;
   svgRef: React.RefObject<SVGSVGElement | null>;
+}
+
+// buildGraphFromMappingResult 반환 타입 재사용
+type GraphLayout = ReturnType<typeof buildGraphFromMappingResult>;
+type GraphNode = GraphLayout["nodes"][number];
+type GraphEdge = GraphLayout["edges"][number];
+
+/**
+ * JSX 노드들을
+ * - depth(부모-자식 관계) 기준으로 가로 방향
+ * - 같은 depth 내에서는 형제 순서대로 세로 방향
+ * 으로 재배치
+ *
+ * 전제:
+ *   - JSX 노드: node.kind === "jsx"
+ *   - 부모 관계: node.meta?.jsxParentId (string | undefined)
+ */
+function applyJsxTreeLayout(layout: GraphLayout): GraphLayout {
+  const { nodes, edges, width, height, colX } = layout;
+
+  // JSX 노드만 추출
+  const jsxNodes = nodes.filter((n: GraphNode) => n.kind === "jsx");
+  if (!jsxNodes.length) {
+    return layout;
+  }
+
+  // 부모 ID 정보 수집 (없으면 루트 취급)
+  const parentIdMap = new Map<string, string | undefined>();
+  for (const node of jsxNodes) {
+    const meta = node.meta as { jsxParentId?: string } | undefined;
+    parentIdMap.set(node.id, meta?.jsxParentId);
+  }
+
+  // JSX 노드 id → node 매핑
+  const jsxNodeById = new Map<string, GraphNode>();
+  for (const node of jsxNodes) {
+    jsxNodeById.set(node.id, node);
+  }
+
+  // 루트 JSX 노드: 부모가 없거나, 부모가 JSX 노드 목록에 없는 경우
+  const rootJsxNodes = jsxNodes.filter((node) => {
+    const parentId = parentIdMap.get(node.id);
+    return !parentId || !jsxNodeById.has(parentId);
+  });
+
+  // depth / rowIndex 계산용 맵
+  const depthById = new Map<string, number>();
+  const rowIndexByDepth = new Map<number, number>();
+
+  // DFS로 순회하면서
+  // - depth 할당
+  // - depth별 y 인덱스를 증가시키며 rowIndex 지정
+  function dfs(node: GraphNode, depth: number) {
+    depthById.set(node.id, depth);
+
+    const currentRow = rowIndexByDepth.get(depth) ?? 0;
+    rowIndexByDepth.set(depth, currentRow + 1);
+
+    // 이 노드의 자식 JSX 노드들
+    const children = jsxNodes.filter((child) => {
+      const parentId = parentIdMap.get(child.id);
+      return parentId === node.id;
+    });
+
+    for (const child of children) {
+      dfs(child, depth + 1);
+    }
+  }
+
+  // 루트들부터 DFS
+  for (const root of rootJsxNodes) {
+    dfs(root, 0);
+  }
+
+  // 최대 depth 계산
+  let maxDepth = 0;
+  for (const d of depthById.values()) {
+    if (d > maxDepth) maxDepth = d;
+  }
+
+  // X/Y 배치 파라미터
+  const baseX = colX.jsx; // JSX 컬럼 중심
+  const depthGapX = 160; // depth 간 가로 간격
+  const baseY = 80; // JSX 영역 시작 Y
+  const rowGapY = 40; // 행 간 세로 간격
+
+  // JSX 노드의 새 좌표 계산 (중심 기준 x/y)
+  const newNodePositions = new Map<string, { x: number; y: number }>();
+
+  // depth / row 별 y 인덱스 재계산용 맵 초기화
+  const usedRowsPerDepth = new Map<number, number>();
+
+  function assignPosition(node: GraphNode, depth: number) {
+    const used = usedRowsPerDepth.get(depth) ?? 0;
+    usedRowsPerDepth.set(depth, used + 1);
+
+    const x =
+      baseX -
+      (maxDepth * depthGapX) / 2 + // 전체 트리를 JSX 중앙 기준으로 좌우로 분산
+      depth * depthGapX;
+
+    const y = baseY + used * rowGapY;
+
+    newNodePositions.set(node.id, { x, y });
+
+    // 자식에 대해서도 재귀
+    const children = jsxNodes.filter((child) => {
+      const parentId = parentIdMap.get(child.id);
+      return parentId === node.id;
+    });
+
+    for (const child of children) {
+      assignPosition(child, depth + 1);
+    }
+  }
+
+  // 루트부터 다시 한 번 좌표 할당
+  usedRowsPerDepth.clear();
+  for (const root of rootJsxNodes) {
+    assignPosition(root, 0);
+  }
+
+  // 노드 좌표 갱신
+  const newNodes: GraphNode[] = nodes.map((node) => {
+    const pos = newNodePositions.get(node.id);
+    if (!pos) return node;
+
+    return {
+      ...node,
+      x: pos.x,
+      y: pos.y,
+    };
+  });
+
+  // edge 좌표도 JSX 노드 기준으로 덮어쓰기
+  const nodeByIdAfter = new Map<string, GraphNode>();
+  for (const node of newNodes) {
+    nodeByIdAfter.set(node.id, node);
+  }
+
+  const newEdges: GraphEdge[] = edges.map((edge) => {
+    const fromNodeId = edge.from.nodeId as string | undefined;
+    const toNodeId = edge.to.nodeId as string | undefined;
+
+    let newFrom = edge.from;
+    let newTo = edge.to;
+
+    if (fromNodeId && nodeByIdAfter.has(fromNodeId)) {
+      const n = nodeByIdAfter.get(fromNodeId)!;
+      newFrom = {
+        ...edge.from,
+        x: n.x,
+        y: n.y,
+      };
+    }
+
+    if (toNodeId && nodeByIdAfter.has(toNodeId)) {
+      const n = nodeByIdAfter.get(toNodeId)!;
+      newTo = {
+        ...edge.to,
+        x: n.x,
+        y: n.y,
+      };
+    }
+
+    return {
+      ...edge,
+      from: newFrom,
+      to: newTo,
+    };
+  });
+
+  // 높이/너비 보정 (JSX 트리가 기존 영역을 넘어갈 수 있으므로)
+  let maxY = height;
+  for (const node of newNodes) {
+    const bottom = node.y + node.height / 2 + 40;
+    if (bottom > maxY) maxY = bottom;
+  }
+
+  let maxX = width;
+  for (const node of newNodes) {
+    const right = node.x + node.width / 2 + 40;
+    if (right > maxX) maxX = right;
+  }
+
+  return {
+    nodes: newNodes,
+    edges: newEdges,
+    width: maxX,
+    height: maxY,
+    colX,
+  };
 }
 
 /**
@@ -69,10 +260,11 @@ function getEdgeStyle(kind: BuildGraph.GraphEdgeKind): {
 }
 
 export function RenderGraphSvg({ mappingResult, svgRef }: RenderGraphSvgProps) {
-  const { nodes, edges, width, height, colX } = useMemo(
-    () => buildGraphFromMappingResult(mappingResult),
-    [mappingResult],
-  );
+  const { nodes, edges, width, height, colX } = useMemo(() => {
+    const base = buildGraphFromMappingResult(mappingResult);
+    // JSX 영역 트리 레이아웃 적용
+    return applyJsxTreeLayout(base);
+  }, [mappingResult]);
 
   if (!mappingResult) {
     return <div className="text-sm text-neutral-500">코드 분석 결과 없음.</div>;

@@ -127,22 +127,21 @@ export function buildGraphFromMappingResult(
   );
   nodes.push(...effectNodes);
 
-  // 4. JSX 노드 (depth 기반으로 배치)
+  // 4. JSX 노드 (depth 기반 컬럼 + 형제 세로 배치)
   type JsxLayoutItem = {
     id: string;
     label: string;
     depth: number;
-    meta?: Record<string, unknown>;
+    props: string[];
+    parentId?: string | null;
   };
 
   const jsxLayoutItems: JsxLayoutItem[] = mappingResult.jsxNodes.map((jsx) => ({
-    id: jsx.id, // AnalyzedJsxNode.id (예: "jsx-1")
+    id: jsx.id, // 논리 JSX id (예: "jsx-1" 또는 "1")
     label: jsx.component,
-    meta: {
-      depth: jsx.depth,
-      props: jsx.props,
-    } as Record<string, unknown>,
     depth: jsx.depth,
+    props: jsx.props,
+    parentId: jsx.parentId ?? null,
   }));
 
   const jsxNodes: BuildGraph.GraphNode[] = [];
@@ -155,25 +154,38 @@ export function buildGraphFromMappingResult(
     jsxByDepth.set(item.depth, arr);
   });
 
+  // JSX 트리 레이아웃 파라미터
+  const jsxBaseX = colX.jsx; // depth=0 컬럼 기준
+  const depthGapX = 160; // depth 증가 시 가로 이동량
+
   const jsxBaseY = 80;
-  const depthGapY = 80; // depth 간 간격
-  const intraGapY = 32; // 같은 depth 내에서 노드 간 간격
+  const depthGapY = 80; // depth 간 세로 오프셋
+  const intraGapY = 32; // 같은 depth 내 형제 간 세로 간격
 
   Array.from(jsxByDepth.entries())
     .sort((a, b) => a[0] - b[0])
     .forEach(([depth, items]) => {
       items.forEach((item, index) => {
+        const x = jsxBaseX + depth * depthGapX;
         const y = jsxBaseY + depth * depthGapY + index * intraGapY;
 
+        const logicalId = item.id;
+        const graphId = `jsx-${logicalId}`;
+
         const node: BuildGraph.GraphNode = {
-          id: `jsx-${item.id}`, // 전체 그래프에서의 node id
+          id: graphId, // 전체 그래프에서의 node id
           label: item.label,
           kind: "jsx",
-          x: colX.jsx,
+          x,
           y,
           width: 120,
           height: 32,
-          meta: item.meta,
+          meta: {
+            depth: item.depth,
+            props: item.props,
+            // applyJsxTreeLayout 이 기대하는 필드: 그래프 노드 기준 부모 id
+            jsxParentId: item.parentId ? `jsx-${item.parentId}` : undefined,
+          } as Record<string, unknown>,
         };
 
         jsxNodes.push(node);
