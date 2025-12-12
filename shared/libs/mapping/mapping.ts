@@ -464,12 +464,14 @@ function analyzeComponentBody(
   effects: Mapping.AnalyzedEffect[];
   callbacks: Mapping.AnalyzedCallback[];
   jsxNodes: Mapping.AnalyzedJsxNode[];
-  calledVariableNames: string[]; // ← 추가
+  calledVariableNames: string[];
+  variables: Mapping.AnalyzedVariable[];
 } {
   const hooks: Mapping.AnalyzedHook[] = [];
   const effects: Mapping.AnalyzedEffect[] = [];
   const callbacks: Mapping.AnalyzedCallback[] = [];
   const jsxNodes: Mapping.AnalyzedJsxNode[] = [];
+  const variables: Mapping.AnalyzedVariable[] = [];
 
   const globalStateNames = new Set<string>();
 
@@ -499,6 +501,85 @@ function analyzeComponentBody(
 
   function inspectFunctionBody(bodyPath: NodePath<t.BlockStatement>): void {
     analyzeJsxTree(bodyPath as unknown as NodePath<t.Node>, jsxNodes);
+
+    // ★ helper variable deps 수집 유틸
+    function collectExprDeps(exprPath: NodePath<t.Node>): string[] {
+      const deps = new Set<string>();
+
+      exprPath.traverse({
+        Identifier(p: NodePath<t.Identifier>) {
+          const parent = p.parent;
+
+          // obj.prop 의 prop(비계산) / { key: value }의 key 등은 제외
+          if (
+            t.isMemberExpression(parent) &&
+            parent.property === p.node &&
+            parent.computed === false
+          ) {
+            return;
+          }
+          if (
+            t.isObjectProperty(parent) &&
+            parent.key === p.node &&
+            parent.computed === false
+          ) {
+            return;
+          }
+
+          deps.add(p.node.name);
+        },
+
+        MemberExpression(p: NodePath<t.MemberExpression>) {
+          // wrapperRef.current -> wrapperRef도 deps로 넣고 싶으면 object를 추가
+          if (t.isIdentifier(p.node.object)) {
+            deps.add(p.node.object.name);
+          }
+        },
+      });
+
+      return Array.from(deps);
+    }
+
+    // ★ 컴포넌트 body 최상위 variable 선언만 수집
+    const topLevelStatements = bodyPath.get("body") as NodePath<t.Statement>[];
+    topLevelStatements.forEach((stmtPath) => {
+      if (!stmtPath.isVariableDeclaration()) return;
+
+      const decls = stmtPath.get(
+        "declarations",
+      ) as NodePath<t.VariableDeclarator>[];
+      decls.forEach((declPath) => {
+        const id = declPath.node.id;
+        const init = declPath.node.init;
+
+        // 이름이 단일 식별자인 경우만 (currentFloor, siblingFloors)
+        if (!t.isIdentifier(id)) return;
+        if (!init) return;
+
+        // 훅/콜백 선언은 제외 (useState/useRef..., ()=>{} 등)
+        if (t.isCallExpression(init) && t.isIdentifier(init.callee)) {
+          const localName = init.callee.name;
+          const source = importMap[localName] ?? null;
+          const kind = classifyHookKind(localName, source);
+          if (kind !== "custom") return; // useState/useRef/.../zustand/react-query 제외
+        }
+        if (t.isArrowFunctionExpression(init) || t.isFunctionExpression(init))
+          return;
+
+        const initPath = declPath.get("init") as NodePath<t.Node>;
+        const deps = collectExprDeps(initPath).filter((n) => n !== id.name);
+
+        const loc = declPath.node.loc;
+        variables.push({
+          id: `var-${variables.length + 1}`,
+          name: id.name,
+          dependencies: deps,
+          definedAt: loc
+            ? { line: loc.start.line, column: loc.start.column }
+            : null,
+        });
+      });
+    });
 
     bodyPath.traverse({
       VariableDeclarator(varPath: NodePath<t.VariableDeclarator>) {
@@ -635,6 +716,7 @@ function analyzeComponentBody(
     callbacks,
     jsxNodes,
     calledVariableNames: Array.from(calledVariableNames),
+    variables,
   };
 }
 
@@ -650,8 +732,14 @@ export function mapping(
   const exportInfo = collectExportedComponents(ast);
   const primaryComponentName = pickPrimaryComponent(exportInfo, fileName);
 
-  const { hooks, effects, callbacks, jsxNodes, calledVariableNames } =
-    analyzeComponentBody(ast, primaryComponentName, importMap);
+  const {
+    hooks,
+    effects,
+    callbacks,
+    jsxNodes,
+    calledVariableNames,
+    variables,
+  } = analyzeComponentBody(ast, primaryComponentName, importMap);
 
   const errors: string[] = [];
 
@@ -663,6 +751,7 @@ export function mapping(
     effects,
     callbacks,
     jsxNodes,
+    variables,
     meta: {
       exportedComponents: exportInfo.namedExports,
       defaultExport: exportInfo.defaultExport,

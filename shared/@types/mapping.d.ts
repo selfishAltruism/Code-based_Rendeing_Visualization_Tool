@@ -78,6 +78,8 @@ declare namespace Mapping {
     callbacks: AnalyzedCallback[];
     jsxNodes: AnalyzedJsxNode[];
 
+    variables: AnalyzedVariable[];
+
     meta: {
       exportedComponents: string[];
       defaultExport: string | null;
@@ -87,5 +89,12 @@ declare namespace Mapping {
     errors: string[];
 
     calledVariableNames: string[];
+  }
+
+  export interface AnalyzedVariable {
+    id: string;
+    name: string;
+    dependencies: string[]; // init 식에서 사용한 식별자들(원본)
+    definedAt: { line: number; column: number } | null;
   }
 }

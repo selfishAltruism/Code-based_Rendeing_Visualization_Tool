@@ -98,6 +98,53 @@ export function buildGraphFromMappingResult(
   const stateNodes = layoutColumnNodes(stateItems, "state", colX.state, 80, 40);
   nodes.push(...stateNodes);
 
+  // 2.5 변수/헬퍼 노드 (currentFloor, siblingFloors 등)
+  const variableItems = (mappingResult.variables ?? []).map((v) => ({
+    id: v.id,
+    label: v.name,
+    meta: { dependencies: v.dependencies } as Record<string, unknown>,
+  }));
+
+  const variableNodes = layoutColumnNodes(
+    variableItems,
+    "variable",
+    colX.variable,
+    80,
+    40,
+  );
+  nodes.push(...variableNodes);
+
+  // state/ref/variable -> variable (렌더링 단계 계산 의존성)
+  (mappingResult.variables ?? []).forEach((v) => {
+    const varNode = variableNodes.find((n) => n.id === `variable-${v.id}`);
+    if (!varNode) return;
+
+    v.dependencies.forEach((depName) => {
+      const fromRef = independentNodes.find((n) => n.label === depName);
+      const fromState = stateNodes.find((n) => n.label.startsWith(depName));
+      const fromVar = variableNodes.find((n) => n.label === depName);
+
+      const fromNode = fromRef ?? fromState ?? fromVar;
+      if (!fromNode) return;
+
+      edges.push({
+        id: `var-dep-${fromNode.id}-${varNode.id}-${depName}`,
+        from: {
+          nodeId: fromNode.id,
+          x: fromNode.x + fromNode.width / 2,
+          y: fromNode.y,
+        },
+        to: {
+          nodeId: varNode.id,
+          x: varNode.x - varNode.width / 2,
+          y: varNode.y,
+        },
+        kind: "state-dependency",
+        label: depName,
+      });
+    });
+  });
+
   // 3. effect / callback 노드
   const effectItems = [
     ...mappingResult.effects.map((e) => ({
@@ -182,7 +229,7 @@ export function buildGraphFromMappingResult(
           meta: {
             depth: item.depth,
             props: item.props,
-            refProps: item.refProps, // ★ 추가
+            refProps: item.refProps,
             jsxParentId: item.parentId ? `jsx-${item.parentId}` : undefined,
           } as Record<string, unknown>,
         };
@@ -359,13 +406,31 @@ export function buildGraphFromMappingResult(
   // state / ref ↔ JSX prop (ref attribute 방향 포함)
   jsxNodes.forEach((jsxNode) => {
     const jsxMeta = jsxNode.meta ?? {};
-    const props = (jsxMeta.props as string[]) ?? [];
+    const ownProps = (jsxMeta.props as string[]) ?? [];
     const refProps = (jsxMeta.refProps as string[]) ?? [];
+
+    // 조상 props까지 합산(조건/맵 렌더 영향 전파)
+    const allPropsSet = new Set<string>(ownProps);
+
+    let cursorParentId = (jsxMeta as { jsxParentId?: string }).jsxParentId;
+    while (cursorParentId) {
+      const parent = jsxNodes.find((n) => n.id === cursorParentId);
+      if (!parent) break;
+
+      const pm = parent.meta ?? {};
+      const pp = (pm.props as string[]) ?? [];
+      pp.forEach((p) => allPropsSet.add(p));
+
+      cursorParentId = (pm as { jsxParentId?: string }).jsxParentId;
+    }
+
+    const props = Array.from(allPropsSet);
 
     props.forEach((name) => {
       const refNode = independentNodes.find((n) => n.label === name);
       const stateNode = stateNodes.find((n) => n.label.startsWith(name));
       const isRefAttr = refProps.includes(name);
+      const variableNode = variableNodes.find((n) => n.label === name);
 
       // 1) JSX element에서 ref attribute로 ref를 연결한 경우
       //    div -> wrapperRef (JSX → ref, mutation 성격)
@@ -407,6 +472,24 @@ export function buildGraphFromMappingResult(
           label: name,
         });
         return;
+      }
+
+      if (variableNode) {
+        edges.push({
+          id: `jsx-prop-var-${variableNode.id}-${jsxNode.id}-${name}`,
+          from: {
+            nodeId: variableNode.id,
+            x: variableNode.x + variableNode.width / 2,
+            y: variableNode.y,
+          },
+          to: {
+            nodeId: jsxNode.id,
+            x: jsxNode.x - jsxNode.width / 2,
+            y: jsxNode.y,
+          },
+          kind: "state-dependency",
+          label: name,
+        });
       }
 
       // 3) 일반 state / 변수 → JSX prop (기존 로직)
