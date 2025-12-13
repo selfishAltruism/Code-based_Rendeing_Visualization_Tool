@@ -419,7 +419,8 @@ export function buildGraphFromMappingResult(
 
       const pm = parent.meta ?? {};
       const pp = (pm.props as string[]) ?? [];
-      pp.forEach((p) => allPropsSet.add(p));
+      const pr = (pm.refProps as string[]) ?? [];
+      pp.filter((p) => !pr.includes(p)).forEach((p) => allPropsSet.add(p)); // refProps 제외하고 전파
 
       cursorParentId = (pm as { jsxParentId?: string }).jsxParentId;
     }

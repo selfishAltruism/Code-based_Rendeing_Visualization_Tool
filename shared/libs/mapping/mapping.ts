@@ -502,7 +502,7 @@ function analyzeComponentBody(
   function inspectFunctionBody(bodyPath: NodePath<t.BlockStatement>): void {
     analyzeJsxTree(bodyPath as unknown as NodePath<t.Node>, jsxNodes);
 
-    // ★ helper variable deps 수집 유틸
+    //  helper variable deps 수집 유틸
     function collectExprDeps(exprPath: NodePath<t.Node>): string[] {
       const deps = new Set<string>();
 
@@ -540,7 +540,7 @@ function analyzeComponentBody(
       return Array.from(deps);
     }
 
-    // ★ 컴포넌트 body 최상위 variable 선언만 수집
+    //  컴포넌트 body 최상위 variable 선언만 수집
     const topLevelStatements = bodyPath.get("body") as NodePath<t.Statement>[];
     topLevelStatements.forEach((stmtPath) => {
       if (!stmtPath.isVariableDeclaration()) return;
